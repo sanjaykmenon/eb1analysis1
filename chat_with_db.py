@@ -245,10 +245,24 @@ Always provide clear, well-formatted responses with relevant data."""
             
             # Get final response from LLM with tool results
             if self.provider == "together":
+                # Together AI doesn't handle tool role well, so convert to user/assistant format
+                clean_history = []
+                for msg in self.conversation_history:
+                    if msg["role"] == "tool":
+                        # Convert tool results to assistant message
+                        clean_history.append({
+                            "role": "assistant",
+                            "content": f"Tool result: {msg['content']}"
+                        })
+                    elif msg["role"] == "assistant" and "tool_calls" in msg:
+                        # Skip the assistant message with tool_calls
+                        continue
+                    else:
+                        clean_history.append(msg)
+                
                 final_response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=[messages[0]] + self.conversation_history,
-                    tools=tools,
+                    messages=[messages[0]] + clean_history,
                     temperature=0.7,
                     max_tokens=2000
                 )
@@ -349,9 +363,23 @@ async def main():
             print("\n\n👋 Goodbye!")
             break
         except Exception as e:
-            print(f"\n❌ Error: {e}")
-            import traceback
-            traceback.print_exc()
+            error_msg = str(e)
+            print(f"\n❌ Error: {error_msg}")
+            
+            # Give helpful hints for common errors
+            if "400" in error_msg and "validation" in error_msg:
+                print("\n💡 Tip: Together AI has some limitations with function calling.")
+                print("   Try rephrasing your question or use a simpler query.")
+            elif "rate limit" in error_msg.lower():
+                print("\n💡 Tip: Rate limit exceeded. Wait a moment and try again.")
+            elif "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+                print("\n💡 Tip: Check that your API key is set correctly.")
+                print(f"   Current provider: {chat.provider}")
+            
+            # Only show full traceback in debug mode
+            if os.getenv("DEBUG"):
+                import traceback
+                traceback.print_exc()
     
     # Clean up
     print("\n🔌 Disconnecting from MCP server...")

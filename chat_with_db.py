@@ -319,7 +319,15 @@ async def main():
     # Let user choose provider
     if len(providers) > 1:
         print(f"\nAvailable providers: {', '.join(providers)}")
-        provider = input(f"Choose provider [{providers[0]}]: ").strip() or providers[0]
+        provider_input = input(f"Choose provider [{providers[0]}]: ").strip()
+        # Validate that input is actually a provider name, not a number
+        if provider_input in providers:
+            provider = provider_input
+        elif not provider_input:  # Empty input = use default
+            provider = providers[0]
+        else:
+            print(f"⚠️  Invalid provider '{provider_input}', using default: {providers[0]}")
+            provider = providers[0]
     else:
         provider = providers[0]
     
@@ -330,6 +338,16 @@ async def main():
         print(f"\n🎯 Using model from environment: {model}")
     else:
         # Show available models for the provider
+        openai_models = [
+            "gpt-4o-mini",  # Default - fast and cheap
+            "gpt-4o",  # Balanced capability
+            "gpt-4-turbo",  # Previous generation
+            "o1",  # Reasoning model
+            "o1-mini",  # Faster reasoning
+            "o3-mini", # Latest reasoning (if available)
+            "gpt-5-mini-2025-08-07"  
+        ]
+        
         together_models = [
             "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",  # Default
             "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",  # Larger, better reasoning
@@ -338,8 +356,18 @@ async def main():
             "deepseek-ai/DeepSeek-V3",  # Excellent reasoning
         ]
         
-        if provider == "together":
-            print(f"\n� Available Together AI models:")
+        if provider == "openai":
+            print(f"\n📋 Available OpenAI models:")
+            for i, m in enumerate(openai_models, 1):
+                default_marker = " (default)" if i == 1 else ""
+                reasoning_marker = " [reasoning model]" if m.startswith("o") else ""
+                print(f"  {i}. {m}{default_marker}{reasoning_marker}")
+            choice = input(f"\nChoose model [1]: ").strip()
+            if choice and choice.isdigit() and 1 <= int(choice) <= len(openai_models):
+                model = openai_models[int(choice) - 1]
+        
+        elif provider == "together":
+            print(f"\n📋 Available Together AI models:")
             for i, m in enumerate(together_models, 1):
                 default_marker = " (default)" if i == 1 else ""
                 print(f"  {i}. {m}{default_marker}")

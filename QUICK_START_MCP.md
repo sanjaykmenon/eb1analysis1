@@ -54,8 +54,19 @@ uv run python chat_with_db.py
 
 **Supported models:**
 - **OpenAI**: `gpt-4o-mini` (default), `gpt-4o`, `gpt-4-turbo`
-- **Together AI**: `meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` (default), any Together model
+- **Together AI**: `meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` (default), `deepseek-ai/DeepSeek-V3`, others
 - **Anthropic**: `claude-3-5-sonnet-20241022` (default), other Claude models
+
+**Choose a different model:**
+```bash
+# Set via environment variable
+export MODEL="deepseek-ai/DeepSeek-V3"
+uv run python chat_with_db.py
+
+# Or select interactively when prompted
+```
+
+See `TOGETHER_MODELS.md` for detailed model comparison and recommendations.
 
 ### Option 2: Claude Desktop (Great for Mac Users)
 

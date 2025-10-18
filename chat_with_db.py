@@ -323,10 +323,36 @@ async def main():
     else:
         provider = providers[0]
     
-    print(f"\n🚀 Starting chat with {provider}...")
+    # Let user optionally choose a different model
+    model = None
+    if os.getenv("MODEL"):
+        model = os.getenv("MODEL")
+        print(f"\n🎯 Using model from environment: {model}")
+    else:
+        # Show available models for the provider
+        together_models = [
+            "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",  # Default
+            "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",  # Larger, better reasoning
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo",  # Newer version
+            "Qwen/Qwen2.5-72B-Instruct-Turbo",  # Strong alternative
+            "deepseek-ai/DeepSeek-V3",  # Excellent reasoning
+        ]
+        
+        if provider == "together":
+            print(f"\n� Available Together AI models:")
+            for i, m in enumerate(together_models, 1):
+                default_marker = " (default)" if i == 1 else ""
+                print(f"  {i}. {m}{default_marker}")
+            choice = input(f"\nChoose model [1]: ").strip()
+            if choice and choice.isdigit() and 1 <= int(choice) <= len(together_models):
+                model = together_models[int(choice) - 1]
+    
+    print(f"\n�🚀 Starting chat with {provider}...")
+    if model:
+        print(f"   Model: {model}")
     
     # Initialize chat
-    chat = DatabaseChat(provider=provider)
+    chat = DatabaseChat(provider=provider, model=model)
     
     # Connect to MCP server
     print("📡 Connecting to AAO ETL MCP server...")

@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import date
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCPServer
+from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -14,7 +14,7 @@ from .db import get_engine
 _ENGINE = None
 _DEFAULT_DSN: Optional[str] = None
 
-server = FastMCPServer("aao-etl-db")
+server = FastMCP("aao-etl-db")
 
 SCHEMA_OVERVIEW = (
     "decisions(decision_id, case_number, source_body, service_center, petition_type,"
@@ -344,56 +344,56 @@ def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
                     if detail:
                         lines.append(f"  ↳ {detail}")
             else:
-        lines.append("\nNo denial patterns recorded for this criterion.")
+                lines.append("\nNo denial patterns recorded for this criterion.")
 
     if args.include_success:
-            success_rows = conn.execute(
-                text(
-                    """
-                    SELECT success_element, COALESCE(evidence_strength,'n/a') AS strength,
-                           COUNT(*) AS occurrences
-                    FROM criterion_success_factors
-                    WHERE criterion_type = :criterion
-                    GROUP BY success_element, COALESCE(evidence_strength,'n/a')
-                    ORDER BY occurrences DESC
-                    LIMIT :limit
-                    """
-                ),
-                params,
-            ).mappings().all()
+        success_rows = conn.execute(
+            text(
+                """
+                SELECT success_element, COALESCE(evidence_strength,'n/a') AS strength,
+                       COUNT(*) AS occurrences
+                FROM criterion_success_factors
+                WHERE criterion_type = :criterion
+                GROUP BY success_element, COALESCE(evidence_strength,'n/a')
+                ORDER BY occurrences DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
 
-            if success_rows:
-                lines.append("\nSuccess factors:")
-                for row in success_rows:
-                    lines.append(
-                        f"• {row['success_element']} (strength={row['strength']}, occurrences={row['occurrences']})"
-                    )
-            else:
-        lines.append("\nNo success factor records for this criterion.")
+        if success_rows:
+            lines.append("\nSuccess factors:")
+            for row in success_rows:
+                lines.append(
+                    f"• {row['success_element']} (strength={row['strength']}, occurrences={row['occurrences']})"
+                )
+        else:
+            lines.append("\nNo success factor records for this criterion.")
 
     if args.include_guidance:
-            guidance_rows = conn.execute(
-                text(
-                    """
-                    SELECT guidance_text
-                    FROM criterion_refile_guidance
-                    WHERE criterion_type = :criterion
-                    ORDER BY created_at DESC
-                    LIMIT :limit
-                    """
-                ),
-                params,
-            ).scalars().all()
+        guidance_rows = conn.execute(
+            text(
+                """
+                SELECT guidance_text
+                FROM criterion_refile_guidance
+                WHERE criterion_type = :criterion
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).scalars().all()
 
-            if guidance_rows:
-                lines.append("\nRefile guidance highlights:")
-                for idx, text_block in enumerate(guidance_rows, start=1):
-                    snippet = text_block.replace("\n", " ")
-                    if len(snippet) > 220:
-                        snippet = snippet[:217] + "..."
-                    lines.append(f"{idx}. {snippet}")
-            else:
-                lines.append("\nNo refile guidance entries recorded for this criterion.")
+        if guidance_rows:
+            lines.append("\nRefile guidance highlights:")
+            for idx, text_block in enumerate(guidance_rows, start=1):
+                snippet = text_block.replace("\n", " ")
+                if len(snippet) > 220:
+                    snippet = snippet[:217] + "..."
+                lines.append(f"{idx}. {snippet}")
+        else:
+            lines.append("\nNo refile guidance entries recorded for this criterion.")
 
     return "\n".join(lines)
 

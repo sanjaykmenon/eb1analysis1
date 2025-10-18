@@ -604,7 +604,7 @@ def mcp_server_command(
     """Start the AAO ETL MCP server for agentic database exploration."""
     from .mcp_server import run_server
 
-    typer.echo("🚀 Starting AAO ETL MCP server (STDIN/STDOUT)...")
+    typer.echo("🚀 Starting AAO ETL MCP server (STDIN/STDOUT)...", err=True)
     run_server(dsn)
 
 def main():

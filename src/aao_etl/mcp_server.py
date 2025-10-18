@@ -5,7 +5,7 @@ from datetime import date
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCPServer
-from pydantic import Field
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from .db import get_engine
@@ -85,51 +85,67 @@ def describe_schema() -> str:
     return SCHEMA_OVERVIEW
 
 
-@server.tool(description="Search AAO decisions by text, outcome, criterion, or date range.")
-def search_decisions(
-    text_filter: str | None = Field(
+class SearchDecisionsArgs(BaseModel):
+    text_filter: Optional[str] = Field(
         default=None,
         description="Case-insensitive substring to match against summaries, rationales, or field of endeavor.",
-    ),
-    outcome: str | None = Field(
+    )
+    outcome: Optional[str] = Field(
         default=None,
         description="Filter by outcome enum (approved, denied, dismissed, sustained, remanded, withdrawn).",
-    ),
-    criterion: str | None = Field(
+    )
+    criterion: Optional[str] = Field(
         default=None,
         description="Restrict to decisions that include this criterion code in claimed_criteria (e.g. AWARD).",
-    ),
-    start_date: date | None = Field(default=None, description="Only include decisions on/after this date."),
-    end_date: date | None = Field(default=None, description="Only include decisions on/before this date."),
-    limit: int = Field(default=10, ge=1, le=100, description="Maximum number of decisions to return."),
-) -> str:
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="ISO date (YYYY-MM-DD). Only include decisions on or after this date.",
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="ISO date (YYYY-MM-DD). Only include decisions on or before this date.",
+    )
+    limit: int = Field(default=10, ge=1, le=100, description="Maximum number of decisions to return.")
+
+
+@server.tool(description="Search AAO decisions by text, outcome, criterion, or date range.")
+def search_decisions(args: SearchDecisionsArgs) -> str:
     where = ["1=1"]
-    params: dict[str, object] = {"limit": limit}
+    params: dict[str, object] = {"limit": args.limit}
     join_clause = ""
 
-    if text_filter:
-        params["text_a"] = f"%{text_filter}%"
-        params["text_b"] = f"%{text_filter}%"
-        params["text_c"] = f"%{text_filter}%"
+    if args.text_filter:
+        params["text_a"] = f"%{args.text_filter}%"
+        params["text_b"] = f"%{args.text_filter}%"
+        params["text_c"] = f"%{args.text_filter}%"
         where.append(
             "(d.summary ILIKE :text_a OR d.final_merits_rationale ILIKE :text_b OR d.field_of_endeavor ILIKE :text_c)"
         )
 
-    if outcome:
-        params["outcome"] = outcome
+    if args.outcome:
+        params["outcome"] = args.outcome
         where.append("d.outcome = :outcome")
 
-    if criterion:
+    if args.criterion:
         join_clause = "JOIN claimed_criteria c ON c.decision_id = d.decision_id"
-        params["criterion"] = criterion
+        params["criterion"] = args.criterion
         where.append("c.criterion = :criterion")
 
-    if start_date:
-        params["start_date"] = start_date
+    if args.start_date:
+        try:
+            parsed = date.fromisoformat(args.start_date)
+        except ValueError:
+            return "start_date must be in ISO format YYYY-MM-DD."
+        params["start_date"] = parsed
         where.append("d.decision_date >= :start_date")
 
-    if end_date:
-        params["end_date"] = end_date
+    if args.end_date:
+        try:
+            parsed = date.fromisoformat(args.end_date)
+        except ValueError:
+            return "end_date must be in ISO format YYYY-MM-DD."
+        params["end_date"] = parsed
         where.append("d.decision_date <= :end_date")
 
     sql = text(
@@ -165,23 +181,25 @@ def search_decisions(
     return "\n".join(lines)
 
 
+class DecisionDetailsArgs(BaseModel):
+    decision_id: Optional[int] = Field(default=None, description="Primary key of the decision to inspect.")
+    case_number: Optional[str] = Field(default=None, description="Case number if the primary key is unknown.")
+    include_quotes: bool = Field(default=False, description="Include up to 5 representative quotes.")
+
+
 @server.tool(description="Retrieve detailed breakdown of a single decision, including criteria and evidence counts.")
-def get_decision_details(
-    decision_id: int | None = Field(default=None, description="Primary key of the decision to inspect."),
-    case_number: str | None = Field(default=None, description="Case number if the primary key is unknown."),
-    include_quotes: bool = Field(default=False, description="Include up to 5 representative quotes."),
-) -> str:
-    if decision_id is None and not case_number:
+def get_decision_details(args: DecisionDetailsArgs) -> str:
+    if args.decision_id is None and not args.case_number:
         return "Provide either decision_id or case_number to identify the decision."
 
     filters = []
     params: dict[str, object] = {}
-    if decision_id is not None:
+    if args.decision_id is not None:
         filters.append("decision_id = :decision_id")
-        params["decision_id"] = decision_id
-    if case_number:
+        params["decision_id"] = args.decision_id
+    if args.case_number:
         filters.append("case_number = :case_number")
-        params["case_number"] = case_number
+        params["case_number"] = args.case_number
 
     base_sql = text(
         f"""
@@ -225,7 +243,7 @@ def get_decision_details(
         ).mappings().all()
 
         quotes = []
-        if include_quotes:
+        if args.include_quotes:
             quotes = conn.execute(
                 text(
                     """
@@ -282,19 +300,21 @@ def get_decision_details(
     return "\n".join(lines)
 
 
+class CriterionInsightsArgs(BaseModel):
+    criterion: str = Field(description="Criterion code to summarise, e.g. AWARD, MEMBERSHIP.")
+    include_denials: bool = Field(default=True, description="Include aggregated denial pattern statistics.")
+    include_success: bool = Field(default=True, description="Include aggregated success factor statistics.")
+    include_guidance: bool = Field(default=False, description="Include refile guidance highlights.")
+    limit: int = Field(default=5, ge=1, le=20, description="Maximum distinct insights to surface per category.")
+
+
 @server.tool(description="Analyze denial patterns or success factors for a given criterion code.")
-def summarize_criterion_insights(
-    criterion: str = Field(description="Criterion code to summarise, e.g. AWARD, MEMBERSHIP."),
-    include_denials: bool = Field(default=True, description="Include aggregated denial pattern statistics."),
-    include_success: bool = Field(default=True, description="Include aggregated success factor statistics."),
-    include_guidance: bool = Field(default=False, description="Include refile guidance highlights."),
-    limit: int = Field(default=5, ge=1, le=20, description="Maximum distinct insights to surface per category."),
-) -> str:
-    params = {"criterion": criterion, "limit": limit}
-    lines = [f"Insights for criterion {criterion}:"]
+def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
+    params = {"criterion": args.criterion, "limit": args.limit}
+    lines = [f"Insights for criterion {args.criterion}:"]
 
     with _db_connection() as conn:
-        if include_denials:
+        if args.include_denials:
             denial_rows = conn.execute(
                 text(
                     """
@@ -324,9 +344,9 @@ def summarize_criterion_insights(
                     if detail:
                         lines.append(f"  ↳ {detail}")
             else:
-                lines.append("\nNo denial patterns recorded for this criterion.")
+        lines.append("\nNo denial patterns recorded for this criterion.")
 
-        if include_success:
+    if args.include_success:
             success_rows = conn.execute(
                 text(
                     """
@@ -349,9 +369,9 @@ def summarize_criterion_insights(
                         f"• {row['success_element']} (strength={row['strength']}, occurrences={row['occurrences']})"
                     )
             else:
-                lines.append("\nNo success factor records for this criterion.")
+        lines.append("\nNo success factor records for this criterion.")
 
-        if include_guidance:
+    if args.include_guidance:
             guidance_rows = conn.execute(
                 text(
                     """

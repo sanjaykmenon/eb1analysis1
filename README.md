@@ -247,6 +247,18 @@ uv run aao insights-stats --format json > results.json
 uv run aao insights-stats --format csv > results.csv
 ```
 
+### MCP Server Integration
+
+```bash
+# Expose the Postgres dataset as a Model Context Protocol server
+uv run aao mcp-server
+
+# Override the database connection if needed
+uv run aao mcp-server --dsn "postgresql+psycopg://postgres:password@localhost:5432/aao_decisions"
+```
+
+The server speaks Model Context Protocol over STDIN/STDOUT and surfaces tools for describing the schema, searching decisions, drilling into a single decision, and summarising denial or success patterns for a criterion. Point any MCP-compatible client or agent to the executable to enable fully agentic exploration of the AAO insights database.
+
 ### Evidence Timeline Validation
 
 ```bash
@@ -269,6 +281,7 @@ uv run aao validate-evidence --decision-id 1234
 | `insights-parallel` | Parallel insights processing | `uv run aao insights-parallel` |
 | `insights-stats` | View analytics | `uv run aao insights-stats` |
 | `validate-evidence` | Check evidence dates | `uv run aao validate-evidence` |
+| `mcp-server` | Expose database via MCP for agentic querying | `uv run aao mcp-server` |
 
 ### Processing Options
 

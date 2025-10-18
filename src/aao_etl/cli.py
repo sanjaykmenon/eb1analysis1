@@ -597,5 +597,15 @@ def validate_evidence_command(
             post_filing_rate = (total_post_filing / total_evidence) * 100
             typer.echo(f"📊 Post-filing rate: {post_filing_rate:.1f}%")
 
+@app.command("mcp-server")
+def mcp_server_command(
+    dsn: Optional[str] = typer.Option(None, help="Postgres DSN (overrides DATABASE_URL)"),
+):
+    """Start the AAO ETL MCP server for agentic database exploration."""
+    from .mcp_server import run_server
+
+    typer.echo("🚀 Starting AAO ETL MCP server (STDIN/STDOUT)...")
+    run_server(dsn)
+
 def main():
     app()

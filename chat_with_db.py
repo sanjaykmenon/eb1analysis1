@@ -241,8 +241,8 @@ IMPORTANT: Do not just say "I've retrieved the information" - actually show the 
                 model=self.model,
                 messages=messages,
                 tools=tools,
-                temperature=0.7,
-                max_tokens=2000
+                temperature=1,
+                max_completion_tokens=20000  # Updated for newer OpenAI models
             )
         else:
             response = self.client.chat.completions.create(
@@ -285,7 +285,7 @@ IMPORTANT: Do not just say "I've retrieved the information" - actually show the 
                 tool_results.append(result)
                 
                 # DEBUG: Show actual tool result
-                print(f"\n📊 Tool Result Preview (first 500 chars):\n{result[:500]}...\n")
+                print(f"\n📊 Tool Result Preview (first 500 chars):\n{result[:3500]}...\n")
                 
                 # Add tool result to history
                 self.conversation_history.append({
@@ -319,8 +319,8 @@ IMPORTANT: Do not just say "I've retrieved the information" - actually show the 
                         "role": "user", 
                         "content": "Please present the tool results in a clear, formatted way with all the details."
                     }],
-                    temperature=0.7,
-                    max_tokens=2000
+                    temperature=1.0,
+                    max_completion_tokens=2000  # Updated for newer OpenAI models
                 )
             else:
                 # For OpenAI, add explicit request to present the data
@@ -330,8 +330,8 @@ IMPORTANT: Do not just say "I've retrieved the information" - actually show the 
                         "role": "user",
                         "content": "Please present the tool results above in a clear, formatted way showing all the data including case numbers."
                     }],
-                    temperature=0.7,
-                    max_tokens=2000
+                    temperature=1.0,
+                    max_completion_tokens=2000  # Updated for newer OpenAI models
                 )
             
             final_message = final_response.choices[0].message

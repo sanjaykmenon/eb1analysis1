@@ -133,12 +133,34 @@ class DatabaseChat:
         """Convert MCP tools to OpenAI function calling format"""
         functions = []
         for tool_name, tool in self.tools.items():
+            # FastMCP wraps Pydantic models in an 'args' parameter
+            # We need to unwrap this for OpenAI function calling
+            schema = tool.inputSchema
+            
+            # If schema has an 'args' wrapper with a $ref, unwrap it
+            if (schema and 
+                'properties' in schema and 
+                'args' in schema['properties'] and 
+                '$ref' in schema['properties']['args']):
+                
+                # Get the actual parameter schema from $defs
+                ref_path = schema['properties']['args']['$ref']  # e.g., '#/$defs/SearchDecisionsArgs'
+                def_name = ref_path.split('/')[-1]
+                
+                if '$defs' in schema and def_name in schema['$defs']:
+                    # Use the unwrapped schema
+                    parameters = schema['$defs'][def_name]
+                else:
+                    parameters = schema
+            else:
+                parameters = schema
+            
             func = {
                 "type": "function",
                 "function": {
                     "name": tool_name,
                     "description": tool.description or f"Call {tool_name}",
-                    "parameters": tool.inputSchema
+                    "parameters": parameters
                 }
             }
             functions.append(func)
@@ -147,7 +169,19 @@ class DatabaseChat:
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
         """Call an MCP tool and return the result"""
         try:
-            result = await self.session.call_tool(tool_name, arguments=arguments)
+            # OpenAI sends flat arguments, but FastMCP expects them wrapped in 'args'
+            # Check if the tool schema requires an 'args' wrapper
+            tool_schema = self.tools[tool_name].inputSchema
+            if (tool_schema and 
+                'properties' in tool_schema and 
+                'args' in tool_schema['properties']):
+                # Wrap the arguments
+                wrapped_args = {"args": arguments}
+            else:
+                # No wrapping needed
+                wrapped_args = arguments
+            
+            result = await self.session.call_tool(tool_name, arguments=wrapped_args)
             # Extract text content from result
             if hasattr(result, 'content') and result.content:
                 if isinstance(result.content, list):
@@ -176,12 +210,24 @@ You have access to MCP tools to search and analyze the database.
 
 Available tools:
 - describe_schema: Show database structure
-- search_decisions: Search for decisions by text, outcome, date, criterion
-- get_decision_detail: Get full details for a specific case
-- analyze_criterion_patterns: Analyze denial/success patterns
+- search_decisions: Find decisions (returns case_number, decision_id, outcome, field, summary)
+- get_decision_details: Get FULL details including criteria findings and evidence breakdown
+- summarize_criterion_insights: Analyze denial/success patterns for a criterion
 
-When users ask questions about the database, use these tools to find answers.
-Always provide clear, well-formatted responses with relevant data."""
+CRITICAL INSTRUCTIONS:
+1. search_decisions returns overview information only (case numbers, dates, outcomes)
+2. To get evidence items, criteria findings, or quotes, you MUST call get_decision_details with the decision_id or case_number
+3. Always show case_number and decision_id in your responses so users can verify in the database
+4. DO NOT make up or invent data - only use what the tools return
+5. After calling tools, ALWAYS present the results in a clear, formatted way
+6. If asked for "evidence items" or "detailed evidence", you MUST call get_decision_details for EACH case
+
+WORKFLOW for evidence requests:
+1. Use search_decisions to find relevant cases -> Get case numbers and IDs
+2. For EACH case, call get_decision_details to get evidence breakdown
+3. Present ALL the evidence data including case numbers for verification
+
+IMPORTANT: Do not just say "I've retrieved the information" - actually show the data from the tool results!"""
             }
         ] + self.conversation_history
         
@@ -213,7 +259,7 @@ Always provide clear, well-formatted responses with relevant data."""
             # Execute tool calls
             self.conversation_history.append({
                 "role": "assistant",
-                "content": message.content,
+                "content": message.content or "",  # Use empty string instead of None
                 "tool_calls": [
                     {
                         "id": tc.id,
@@ -227,6 +273,7 @@ Always provide clear, well-formatted responses with relevant data."""
                 ]
             })
             
+            tool_results = []
             # Call each tool
             for tool_call in message.tool_calls:
                 func_name = tool_call.function.name
@@ -235,6 +282,10 @@ Always provide clear, well-formatted responses with relevant data."""
                 print(f"🔧 Calling {func_name}({json.dumps(args, indent=2)})")
                 
                 result = await self.call_tool(func_name, args)
+                tool_results.append(result)
+                
+                # DEBUG: Show actual tool result
+                print(f"\n📊 Tool Result Preview (first 500 chars):\n{result[:500]}...\n")
                 
                 # Add tool result to history
                 self.conversation_history.append({
@@ -242,6 +293,8 @@ Always provide clear, well-formatted responses with relevant data."""
                     "tool_call_id": tool_call.id,
                     "content": result
                 })
+            
+            print(f"💭 Tool calls complete. Asking LLM to synthesize {len(tool_results)} result(s)...")
             
             # Get final response from LLM with tool results
             if self.provider == "together":
@@ -262,33 +315,49 @@ Always provide clear, well-formatted responses with relevant data."""
                 
                 final_response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=[messages[0]] + clean_history,
+                    messages=[messages[0]] + clean_history + [{
+                        "role": "user", 
+                        "content": "Please present the tool results in a clear, formatted way with all the details."
+                    }],
                     temperature=0.7,
                     max_tokens=2000
                 )
             else:
+                # For OpenAI, add explicit request to present the data
                 final_response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=[messages[0]] + self.conversation_history,
-                    tools=tools,
-                    tool_choice="auto"
+                    messages=messages + self.conversation_history[len(self.conversation_history) - len(tool_results)*2:] + [{
+                        "role": "user",
+                        "content": "Please present the tool results above in a clear, formatted way showing all the data including case numbers."
+                    }],
+                    temperature=0.7,
+                    max_tokens=2000
                 )
             
             final_message = final_response.choices[0].message
+            # Handle None or empty content
+            content = final_message.content or "I've retrieved the information from the database."
+            
+            # DEBUG: Check if content is actually present
+            if not final_message.content:
+                print(f"⚠️  Warning: LLM returned empty content after tool calls")
+                print(f"   Tool results were: {[r[:100] for r in tool_results]}")
+            
             self.conversation_history.append({
                 "role": "assistant",
-                "content": final_message.content
+                "content": content
             })
             
-            return final_message.content
+            return content
         
         else:
             # No tool calls, just return the response
+            content = message.content or "I understand."
             self.conversation_history.append({
                 "role": "assistant",
-                "content": message.content
+                "content": content
             })
-            return message.content
+            return content
 
 
 async def main():

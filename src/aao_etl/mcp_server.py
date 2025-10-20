@@ -166,17 +166,22 @@ def search_decisions(args: SearchDecisionsArgs) -> str:
     if not rows:
         return "No decisions matched the provided filters."
 
-    lines = ["Found decisions:"]
+    lines = [f"Found {len(rows)} decision(s):\n"]
     for row in rows:
         summary = (row["synopsis"] or "").replace("\n", " ")
         if len(summary) > 240:
             summary = summary[:237] + "..."
+        # Make case_number prominent for easy DB lookup
+        case_num = row['case_number'] or 'NO_CASE_NUMBER'
         lines.append(
-            f"• #{row['decision_id']} {row['case_number'] or 'case TBD'} "
-            f"({row['decision_date'] or 'date n/a'}) outcome={row['outcome'] or 'unknown'}"
+            f"📄 Case: {case_num} | ID: {row['decision_id']} | "
+            f"Date: {row['decision_date'] or 'n/a'} | Outcome: {row['outcome'] or 'unknown'}"
         )
+        if row['field_of_endeavor']:
+            lines.append(f"   Field: {row['field_of_endeavor']}")
         if summary:
-            lines.append(f"  ↳ {summary}")
+            lines.append(f"   Summary: {summary}")
+        lines.append("")  # Blank line between results
 
     return "\n".join(lines)
 
@@ -258,8 +263,12 @@ def get_decision_details(args: DecisionDetailsArgs) -> str:
             ).mappings().all()
 
     lines = [
-        f"Decision #{decision['decision_id']} | case {decision['case_number'] or 'n/a'}",
-        f"Outcome: {decision['outcome'] or 'unknown'} | Decision date: {decision['decision_date'] or 'n/a'}",
+        "=" * 70,
+        f"📄 CASE NUMBER: {decision['case_number'] or 'NO_CASE_NUMBER'}",
+        f"   Decision ID: {decision['decision_id']}",
+        "=" * 70,
+        f"Outcome: {decision['outcome'] or 'unknown'}",
+        f"Decision date: {decision['decision_date'] or 'n/a'} | Filing date: {decision['filing_date'] or 'n/a'}",
         f"Field of endeavor: {decision['field_of_endeavor'] or 'n/a'}",
     ]
 
@@ -318,13 +327,17 @@ def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
             denial_rows = conn.execute(
                 text(
                     """
-                    SELECT t.tag_name, t.category, COALESCE(r.rejection_detail,'') AS detail,
-                           COUNT(*) AS occurrences
+                    SELECT t.tag_name, t.category, 
+                           COALESCE(r.rejection_detail,'') AS detail,
+                           d.case_number,
+                           d.decision_id,
+                           COUNT(*) OVER (PARTITION BY t.tag_name, t.category) AS occurrences
                     FROM criterion_rejection_patterns r
                     LEFT JOIN denial_issue_taxonomy t ON r.denial_tag_id = t.tag_id
+                    LEFT JOIN claimed_criteria c ON r.criterion_id = c.criterion_id
+                    LEFT JOIN decisions d ON c.decision_id = d.decision_id
                     WHERE r.criterion_type = :criterion
-                    GROUP BY t.tag_name, t.category, COALESCE(r.rejection_detail,'')
-                    ORDER BY occurrences DESC
+                    ORDER BY occurrences DESC, t.tag_name
                     LIMIT :limit
                     """
                 ),
@@ -332,17 +345,22 @@ def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
             ).mappings().all()
 
             if denial_rows:
-                lines.append("\nTop denial patterns:")
+                lines.append("\n" + "=" * 70)
+                lines.append("🚫 TOP DENIAL PATTERNS")
+                lines.append("=" * 70)
                 for row in denial_rows:
                     detail = row["detail"].replace("\n", " ") if row["detail"] else ""
                     if len(detail) > 160:
                         detail = detail[:157] + "..."
                     label = row["tag_name"] or "unspecified"
+                    case_info = f"Case: {row['case_number'] or 'n/a'} (ID: {row['decision_id']})"
                     lines.append(
                         f"• {label} (category={row['category'] or 'n/a'}, occurrences={row['occurrences']})"
                     )
+                    lines.append(f"  {case_info}")
                     if detail:
-                        lines.append(f"  ↳ {detail}")
+                        lines.append(f"  Detail: {detail}")
+                    lines.append("")
             else:
                 lines.append("\nNo denial patterns recorded for this criterion.")
 
@@ -350,12 +368,16 @@ def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
         success_rows = conn.execute(
             text(
                 """
-                SELECT success_element, COALESCE(evidence_strength,'n/a') AS strength,
-                       COUNT(*) AS occurrences
-                FROM criterion_success_factors
-                WHERE criterion_type = :criterion
-                GROUP BY success_element, COALESCE(evidence_strength,'n/a')
-                ORDER BY occurrences DESC
+                SELECT s.success_element, 
+                       COALESCE(s.evidence_strength,'n/a') AS strength,
+                       d.case_number,
+                       d.decision_id,
+                       COUNT(*) OVER (PARTITION BY s.success_element) AS occurrences
+                FROM criterion_success_factors s
+                LEFT JOIN claimed_criteria c ON s.criterion_id = c.criterion_id
+                LEFT JOIN decisions d ON c.decision_id = d.decision_id
+                WHERE s.criterion_type = :criterion
+                ORDER BY occurrences DESC, s.success_element
                 LIMIT :limit
                 """
             ),
@@ -363,11 +385,16 @@ def summarize_criterion_insights(args: CriterionInsightsArgs) -> str:
         ).mappings().all()
 
         if success_rows:
-            lines.append("\nSuccess factors:")
+            lines.append("\n" + "=" * 70)
+            lines.append("✅ SUCCESS FACTORS")
+            lines.append("=" * 70)
             for row in success_rows:
+                case_info = f"Case: {row['case_number'] or 'n/a'} (ID: {row['decision_id']})"
                 lines.append(
                     f"• {row['success_element']} (strength={row['strength']}, occurrences={row['occurrences']})"
                 )
+                lines.append(f"  {case_info}")
+                lines.append("")
         else:
             lines.append("\nNo success factor records for this criterion.")
 
